@@ -1,29 +1,8 @@
-import { LoanScheduleRow } from "../hooks/useLoanCalculator";
-
-interface LoanRegistrationSummary {
-  firstMonthPayment: number;
-  totalInterest: number;
-  totalPayment: number;
-}
-
-export interface LoanRegistrationPayload {
-  principal: number;
-  termMonths: number;
-  annualInterestRate: number;
-  schedule: LoanScheduleRow[];
-  summary: LoanRegistrationSummary;
-}
-
-interface JsonBinSaveResult {
-  recordId: string;
-}
-
-interface JsonBinResponse {
-  metadata?: {
-    id?: string;
-  };
-  message?: string;
-}
+import {
+  JsonBinResponse,
+  JsonBinSaveResult,
+  LoanRegistrationPayload,
+} from "../types";
 
 const JSONBIN_BASE_URL = "https://api.jsonbin.io/v3/b";
 

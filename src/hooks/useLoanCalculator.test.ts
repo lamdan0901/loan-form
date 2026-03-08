@@ -1,8 +1,6 @@
 import { renderHook, act } from "@testing-library/react";
 import {
   useLoanCalculator,
-  formatCurrencyInput,
-  getRawNumber,
   MONTHS_PER_YEAR,
   PERCENT_DIVISOR,
   MAX_PRINCIPAL,
@@ -11,6 +9,7 @@ import {
   MIN_INTEREST_RATE,
   MAX_INTEREST_RATE,
 } from "./useLoanCalculator";
+import { formatCurrencyInput, getRawNumber } from "../lib/formatters";
 
 // ---------------------------------------------------------------------------
 // Constants

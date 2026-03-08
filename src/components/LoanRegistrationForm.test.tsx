@@ -1,7 +1,7 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
-import LoanRegistrationForm from "./LoanRegistrationForm";
+import { LoanRegistrationForm } from "./LoanRegistrationForm";
 import { saveLoanRegistration } from "../services/jsonbin";
 
 vi.mock("../services/jsonbin", () => ({
@@ -230,7 +230,7 @@ describe("LoanRegistrationForm — register action", () => {
     vi.clearAllMocks();
   });
 
-  it("sends registration payload and shows success message", async () => {
+  it("sends registration payload and shows success screen after success", async () => {
     vi.mocked(saveLoanRegistration).mockResolvedValue({ recordId: "bin_123" });
     render(<LoanRegistrationForm />);
     const user = userEvent.setup();
@@ -251,16 +251,63 @@ describe("LoanRegistrationForm — register action", () => {
     expect(saveLoanRegistration).toHaveBeenCalledTimes(1);
     expect(saveLoanRegistration).toHaveBeenCalledWith(
       expect.objectContaining({
-        principal: 12000000,
-        termMonths: 12,
-        annualInterestRate: 12,
+        principal: "12000000",
+        term: "12",
+        interestRate: "12",
       }),
     );
 
     expect(
-      await screen.findByText(/đăng ký khoản vay thành công/i),
+      await screen.findByRole("heading", {
+        name: /đăng ký khoản vay thành công/i,
+      }),
     ).toBeInTheDocument();
     expect(screen.getByText(/mã lưu: bin_123/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /quay lại trang đăng ký vay vốn/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: /số tiền vay/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("returns to a fresh loan form when user clicks back button", async () => {
+    vi.mocked(saveLoanRegistration).mockResolvedValue({ recordId: "bin_123" });
+    render(<LoanRegistrationForm />);
+    const user = userEvent.setup();
+
+    await user.type(
+      screen.getByRole("textbox", { name: /số tiền vay/i }),
+      "12000000",
+    );
+    await user.type(screen.getByRole("spinbutton", { name: /kỳ hạn/i }), "12");
+    await user.type(
+      screen.getByRole("spinbutton", { name: /lãi suất/i }),
+      "12",
+    );
+    await user.click(screen.getByRole("button", { name: /tính toán/i }));
+    await user.click(screen.getByRole("button", { name: /đăng ký vay/i }));
+
+    await screen.findByRole("heading", {
+      name: /đăng ký khoản vay thành công/i,
+    });
+    await user.click(
+      screen.getByRole("button", { name: /quay lại trang đăng ký vay vốn/i }),
+    );
+
+    expect(screen.getByRole("textbox", { name: /số tiền vay/i })).toHaveValue(
+      "",
+    );
+    expect(screen.getByRole("spinbutton", { name: /kỳ hạn/i })).toHaveValue(
+      null,
+    );
+    expect(screen.getByRole("spinbutton", { name: /lãi suất/i })).toHaveValue(
+      null,
+    );
+    expect(
+      screen.queryByRole("heading", { name: /đăng ký khoản vay thành công/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows api error message when registration fails", async () => {
@@ -318,13 +365,16 @@ describe("LoanRegistrationForm — register action", () => {
       screen.getByRole("button", { name: /đang gửi đăng ký/i }),
     ).toBeDisabled();
     resolveRequest?.({ recordId: "bin_delayed" });
-    expect(await screen.findByText(/mã lưu: bin_delayed/i)).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /đã đăng ký vay/i }),
-    ).toBeDisabled();
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", {
+          name: /đăng ký khoản vay thành công/i,
+        }),
+      ).toBeInTheDocument();
+    });
   });
 
-  it("re-enables register button when recalculating after success", async () => {
+  it("allows a new calculation after successful registration reset", async () => {
     vi.mocked(saveLoanRegistration).mockResolvedValue({ recordId: "bin_123" });
     render(<LoanRegistrationForm />);
     const user = userEvent.setup();
@@ -341,10 +391,27 @@ describe("LoanRegistrationForm — register action", () => {
     await user.click(screen.getByRole("button", { name: /tính toán/i }));
 
     await user.click(screen.getByRole("button", { name: /đăng ký vay/i }));
-    expect(
-      await screen.findByRole("button", { name: /đã đăng ký vay/i }),
-    ).toBeDisabled();
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", {
+          name: /đăng ký khoản vay thành công/i,
+        }),
+      ).toBeInTheDocument();
+    });
 
+    await user.click(
+      screen.getByRole("button", { name: /quay lại trang đăng ký vay vốn/i }),
+    );
+
+    await user.type(
+      screen.getByRole("textbox", { name: /số tiền vay/i }),
+      "15000000",
+    );
+    await user.type(screen.getByRole("spinbutton", { name: /kỳ hạn/i }), "24");
+    await user.type(
+      screen.getByRole("spinbutton", { name: /lãi suất/i }),
+      "10",
+    );
     await user.click(screen.getByRole("button", { name: /tính toán/i }));
 
     expect(
@@ -352,7 +419,7 @@ describe("LoanRegistrationForm — register action", () => {
     ).toBeEnabled();
   });
 
-  it("re-enables register button when any input changes after success", async () => {
+  it("clears previous values so user starts from a fresh form after success", async () => {
     vi.mocked(saveLoanRegistration).mockResolvedValue({ recordId: "bin_456" });
     render(<LoanRegistrationForm />);
     const user = userEvent.setup();
@@ -369,17 +436,27 @@ describe("LoanRegistrationForm — register action", () => {
     await user.click(screen.getByRole("button", { name: /tính toán/i }));
 
     await user.click(screen.getByRole("button", { name: /đăng ký vay/i }));
-    expect(
-      await screen.findByRole("button", { name: /đã đăng ký vay/i }),
-    ).toBeDisabled();
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", {
+          name: /đăng ký khoản vay thành công/i,
+        }),
+      ).toBeInTheDocument();
+    });
 
-    const termInput = screen.getByRole("spinbutton", { name: /kỳ hạn/i });
-    await user.clear(termInput);
-    await user.type(termInput, "24");
+    await user.click(
+      screen.getByRole("button", { name: /quay lại trang đăng ký vay vốn/i }),
+    );
 
-    expect(
-      screen.getByRole("button", { name: /đăng ký vay ngay/i }),
-    ).toBeEnabled();
+    expect(screen.getByRole("textbox", { name: /số tiền vay/i })).toHaveValue(
+      "",
+    );
+    expect(screen.getByRole("spinbutton", { name: /kỳ hạn/i })).toHaveValue(
+      null,
+    );
+    expect(screen.getByRole("spinbutton", { name: /lãi suất/i })).toHaveValue(
+      null,
+    );
   });
 });
 

@@ -7,7 +7,7 @@ import {
   MIN_INTEREST_RATE,
   MAX_INTEREST_RATE,
 } from "../constants/loan";
-import { formatNumberDisplay } from "../utils/numberFormat";
+import { formatCurrencyDisplay } from "../lib/formatters";
 
 const getRawNumber = (value: string): string => {
   if (!value) return "";
@@ -40,7 +40,7 @@ export const loanRegSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["principal"],
-        message: `Số tiền vay tối đa là ${formatNumberDisplay(MAX_PRINCIPAL)} đ.`,
+        message: `Số tiền vay tối đa là ${formatCurrencyDisplay(MAX_PRINCIPAL)}.`,
       });
     }
 

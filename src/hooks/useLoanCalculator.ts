@@ -1,5 +1,4 @@
 import { useState, ChangeEvent, FormEvent } from "react";
-import BigNumber from "bignumber.js";
 import {
   MONTHS_PER_YEAR,
   PERCENT_DIVISOR,
@@ -10,6 +9,9 @@ import {
   MAX_INTEREST_RATE,
 } from "../constants/loan";
 import { loanRegSchema } from "../schemas/loanRegSchema";
+import { LoanFormData, LoanFormErrors, LoanScheduleRow } from "../types";
+import { formatCurrencyInput } from "../lib/formatters";
+import { buildLoanSchedule } from "../lib/loan";
 
 export {
   MONTHS_PER_YEAR,
@@ -19,37 +21,6 @@ export {
   MAX_TERM_MONTHS,
   MIN_INTEREST_RATE,
   MAX_INTEREST_RATE,
-};
-
-export interface LoanFormData {
-  principal: string;
-  term: string;
-  interestRate: string;
-}
-
-export interface LoanFormErrors {
-  principal?: string;
-  term?: string;
-  interestRate?: string;
-}
-
-export interface LoanScheduleRow {
-  month: number;
-  principalPayment: number;
-  interestPayment: number;
-  totalPayment: number;
-  remainingBalance: number;
-}
-
-export const formatCurrencyInput = (value: string): string => {
-  if (!value) return "";
-  const cleanValue = value.replace(/[^0-9]/g, "");
-  return cleanValue.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-};
-
-export const getRawNumber = (value: string): string => {
-  if (!value) return "";
-  return value.replace(/,/g, "");
 };
 
 export const useLoanCalculator = (
@@ -75,7 +46,7 @@ export const useLoanCalculator = (
     }
   };
 
-  const validateForm = (): boolean => {
+  const isFormValid = (): boolean => {
     const parsed = loanRegSchema.safeParse(formData);
 
     if (parsed.success) {
@@ -95,40 +66,11 @@ export const useLoanCalculator = (
   };
 
   const calculateLoan = (e?: FormEvent<HTMLFormElement>) => {
-    if (e) e.preventDefault();
-    if (!validateForm()) return;
+    e?.preventDefault();
 
-    const principalStr = getRawNumber(formData.principal);
-    let currentBalance = new BigNumber(principalStr);
-    const months = new BigNumber(formData.term);
-    const annualRate = new BigNumber(formData.interestRate);
+    if (!isFormValid()) return;
 
-    const monthlyRate = annualRate
-      .dividedBy(MONTHS_PER_YEAR)
-      .dividedBy(PERCENT_DIVISOR);
-    const principalPayment = currentBalance.dividedBy(months);
-
-    const newSchedule: LoanScheduleRow[] = [];
-    const termNumber = Number(formData.term);
-
-    for (let i = 1; i <= termNumber; i++) {
-      const interestPayment = currentBalance.multipliedBy(monthlyRate);
-      const totalPayment = principalPayment.plus(interestPayment);
-      currentBalance = currentBalance.minus(principalPayment);
-
-      if (currentBalance.isLessThan(0)) {
-        currentBalance = new BigNumber(0);
-      }
-
-      newSchedule.push({
-        month: i,
-        principalPayment: principalPayment.toNumber(),
-        interestPayment: interestPayment.toNumber(),
-        totalPayment: totalPayment.toNumber(),
-        remainingBalance: currentBalance.toNumber(),
-      });
-    }
-
+    const newSchedule = buildLoanSchedule(formData);
     setSchedule(newSchedule);
     setIsCalculated(true);
   };

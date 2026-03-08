@@ -1,39 +1,37 @@
-import { useCallback, useState } from "react";
-import BigNumber from "bignumber.js";
-import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import BigNumber from "bignumber.js";
+import { useMemo, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 import {
-  type LoanScheduleRow,
-  type LoanFormData,
-  formatCurrencyInput,
-  getRawNumber,
-  MONTHS_PER_YEAR,
-  PERCENT_DIVISOR,
-  MIN_TERM_MONTHS,
+  MAX_INTEREST_RATE,
   MAX_TERM_MONTHS,
   MIN_INTEREST_RATE,
-  MAX_INTEREST_RATE,
+  MIN_TERM_MONTHS,
 } from "../hooks/useLoanCalculator";
-import { saveLoanRegistration } from "../services/jsonbin";
-import { formatNumberDisplay } from "../utils/numberFormat";
 import { loanRegSchema } from "../schemas/loanRegSchema";
-
-const formatCurrency = (value: number): string => {
-  return `${formatNumberDisplay(value)} đ`;
-};
+import { saveLoanRegistration } from "../services/jsonbin";
+import { LoanFormData, LoanScheduleRow } from "../types";
+import {
+  formatCurrencyInput,
+  getRawNumber,
+  formatCurrencyDisplay,
+} from "../lib/formatters";
+import { buildLoanSchedule } from "../lib/loan";
+import { cn } from "../lib/utils";
+import { LoanRegistrationSuccessScreen } from "./LoanRegistrationSuccessScreen";
 
 const inputBase =
   "w-full px-4 py-3 rounded-xl border bg-white text-slate-800 text-sm outline-none transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent";
 const inputError = "border-red-400 focus:ring-red-400";
 const inputNormal = "border-slate-200 hover:border-slate-300";
 
-const LoanRegistrationForm = () => {
+export const LoanRegistrationForm = () => {
   const {
     control,
     register,
     handleSubmit,
+    reset,
     formState: { errors },
-    getValues,
   } = useForm<LoanFormData>({
     resolver: zodResolver(loanRegSchema),
     mode: "onChange",
@@ -46,82 +44,60 @@ const LoanRegistrationForm = () => {
   });
 
   const [schedule, setSchedule] = useState<LoanScheduleRow[]>([]);
+  const [calculatedFormData, setCalculatedFormData] =
+    useState<LoanFormData | null>(null);
   const [isCalculated, setIsCalculated] = useState(false);
 
   const [isRegistering, setIsRegistering] = useState(false);
   const [registerSuccess, setRegisterSuccess] = useState<string | null>(null);
   const [registerError, setRegisterError] = useState<string | null>(null);
-  const [isRegisteredSuccessfully, setIsRegisteredSuccessfully] =
-    useState(false);
 
-  const resetRegistrationState = useCallback(() => {
+  const isRegisteredSuccessfully = !!registerSuccess;
+
+  const { totalInterest, totalPayment } = useMemo(() => {
+    const interest = schedule.reduce(
+      (sum, row) => sum.plus(row.interestPayment),
+      new BigNumber(0),
+    );
+    const payment = schedule.reduce(
+      (sum, row) => sum.plus(row.totalPayment),
+      new BigNumber(0),
+    );
+
+    return {
+      totalInterest: interest.toNumber(),
+      totalPayment: payment.toNumber(),
+    };
+  }, [schedule]);
+
+  const resetRegistrationState = () => {
     setRegisterSuccess(null);
     setRegisterError(null);
-    setIsRegisteredSuccessfully(false);
-  }, []);
+  };
 
   const handleFormSubmit = (formData: LoanFormData) => {
     resetRegistrationState();
-
-    const principalStr = getRawNumber(formData.principal);
-    let currentBalance = new BigNumber(principalStr);
-    const months = new BigNumber(formData.term);
-    const annualRate = new BigNumber(formData.interestRate);
-
-    const monthlyRate = annualRate
-      .dividedBy(MONTHS_PER_YEAR)
-      .dividedBy(PERCENT_DIVISOR);
-    const principalPayment = currentBalance.dividedBy(months);
-
-    const newSchedule: LoanScheduleRow[] = [];
-    const termNumber = Number(formData.term);
-
-    for (let i = 1; i <= termNumber; i++) {
-      const interestPayment = currentBalance.multipliedBy(monthlyRate);
-      const totalPayment = principalPayment.plus(interestPayment);
-      currentBalance = currentBalance.minus(principalPayment);
-
-      if (currentBalance.isLessThan(0)) {
-        currentBalance = new BigNumber(0);
-      }
-
-      newSchedule.push({
-        month: i,
-        principalPayment: principalPayment.toNumber(),
-        interestPayment: interestPayment.toNumber(),
-        totalPayment: totalPayment.toNumber(),
-        remainingBalance: currentBalance.toNumber(),
-      });
-    }
+    const newSchedule = buildLoanSchedule(formData);
 
     setSchedule(newSchedule);
+    setCalculatedFormData(formData);
     setIsCalculated(true);
   };
 
   const handleRegister = async () => {
+    if (!calculatedFormData || schedule.length === 0) {
+      setRegisterError("Vui lòng tính toán lịch trả nợ trước khi đăng ký.");
+      return;
+    }
+
     setIsRegistering(true);
     setRegisterSuccess(null);
     setRegisterError(null);
-    setIsRegisteredSuccessfully(false);
 
     try {
-      const formValues = getValues();
-      const principal = Number(getRawNumber(formValues.principal));
-      const termMonths = Number(formValues.term);
-      const annualInterestRate = Number(formValues.interestRate);
-      const totalInterest = schedule.reduce(
-        (sum, row) => sum + row.interestPayment,
-        0,
-      );
-      const totalPayment = schedule.reduce(
-        (sum, row) => sum + row.totalPayment,
-        0,
-      );
-
       const response = await saveLoanRegistration({
-        principal,
-        termMonths,
-        annualInterestRate,
+        ...calculatedFormData,
+        principal: getRawNumber(calculatedFormData.principal),
         schedule,
         summary: {
           firstMonthPayment: schedule[0]?.totalPayment ?? 0,
@@ -133,24 +109,35 @@ const LoanRegistrationForm = () => {
       setRegisterSuccess(
         `Đăng ký khoản vay thành công! Mã lưu: ${response.recordId}`,
       );
-      setIsRegisteredSuccessfully(true);
+
+      // Bring the form back to an initial blank state after successful registration.
+      reset({
+        principal: "",
+        term: "",
+        interestRate: "",
+      });
+      setSchedule([]);
+      setCalculatedFormData(null);
+      setIsCalculated(false);
     } catch (error) {
       setRegisterError(
         error instanceof Error
           ? error.message
           : "Không thể đăng ký khoản vay. Vui lòng thử lại.",
       );
-      setIsRegisteredSuccessfully(false);
     } finally {
       setIsRegistering(false);
     }
   };
 
-  const totalInterest = schedule.reduce(
-    (sum, row) => sum + row.interestPayment,
-    0,
-  );
-  const totalPayment = schedule.reduce((sum, row) => sum + row.totalPayment, 0);
+  if (isRegisteredSuccessfully) {
+    return (
+      <LoanRegistrationSuccessScreen
+        message={registerSuccess}
+        onBack={resetRegistrationState}
+      />
+    );
+  }
 
   return (
     <div className="w-full max-w-4xl mx-auto px-4 py-10">
@@ -160,7 +147,7 @@ const LoanRegistrationForm = () => {
             background:
               "linear-gradient(135deg, #1d4ed8 0%, #2563eb 50%, #0ea5e9 100%)",
           }}
-          className="px-8 py-8"
+          className="p-8"
         >
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center text-white text-2xl shrink-0">
@@ -177,7 +164,7 @@ const LoanRegistrationForm = () => {
           </div>
         </div>
 
-        <div className="px-8 py-8">
+        <div className="p-8">
           <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <div>
@@ -202,7 +189,10 @@ const LoanRegistrationForm = () => {
                         resetRegistrationState();
                         field.onChange(formatCurrencyInput(e.target.value));
                       }}
-                      className={`${inputBase} ${errors.principal ? inputError : inputNormal}`}
+                      className={cn(
+                        inputBase,
+                        errors.principal ? inputError : inputNormal,
+                      )}
                       placeholder="Tối thiểu 100,000 VNĐ"
                     />
                   )}
@@ -229,7 +219,10 @@ const LoanRegistrationForm = () => {
                   })}
                   min={MIN_TERM_MONTHS}
                   max={MAX_TERM_MONTHS}
-                  className={`${inputBase} ${errors.term ? inputError : inputNormal}`}
+                  className={cn(
+                    inputBase,
+                    errors.term ? inputError : inputNormal,
+                  )}
                   placeholder={`${MIN_TERM_MONTHS} – ${MAX_TERM_MONTHS} tháng`}
                 />
                 {errors.term?.message && (
@@ -255,7 +248,10 @@ const LoanRegistrationForm = () => {
                   })}
                   min={MIN_INTEREST_RATE}
                   max={MAX_INTEREST_RATE}
-                  className={`${inputBase} ${errors.interestRate ? inputError : inputNormal}`}
+                  className={cn(
+                    inputBase,
+                    errors.interestRate ? inputError : inputNormal,
+                  )}
                   placeholder={`${MIN_INTEREST_RATE} – ${MAX_INTEREST_RATE}%`}
                 />
                 {errors.interestRate?.message && (
@@ -285,7 +281,7 @@ const LoanRegistrationForm = () => {
                     Trả tháng đầu
                   </p>
                   <p className="text-xl font-bold text-blue-700">
-                    {formatCurrency(schedule[0]?.totalPayment ?? 0)}
+                    {formatCurrencyDisplay(schedule[0]?.totalPayment ?? 0)}
                   </p>
                 </div>
                 <div className="rounded-2xl bg-amber-50 border border-amber-100 p-5">
@@ -293,7 +289,7 @@ const LoanRegistrationForm = () => {
                     Tổng tiền lãi
                   </p>
                   <p className="text-xl font-bold text-amber-700">
-                    {formatCurrency(totalInterest)}
+                    {formatCurrencyDisplay(totalInterest)}
                   </p>
                 </div>
                 <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-5">
@@ -301,7 +297,7 @@ const LoanRegistrationForm = () => {
                     Tổng thanh toán
                   </p>
                   <p className="text-xl font-bold text-emerald-700">
-                    {formatCurrency(totalPayment)}
+                    {formatCurrencyDisplay(totalPayment)}
                   </p>
                 </div>
               </div>
@@ -340,22 +336,25 @@ const LoanRegistrationForm = () => {
                       {schedule.map((row, idx) => (
                         <tr
                           key={row.month}
-                          className={`${idx % 2 === 0 ? "bg-white" : "bg-slate-50"} hover:bg-blue-50 transition-colors duration-100`}
+                          className={cn(
+                            idx % 2 === 0 ? "bg-white" : "bg-slate-50",
+                            "hover:bg-blue-50 transition-colors duration-100",
+                          )}
                         >
                           <td className="py-2.5 px-4 text-left font-medium text-slate-600">
                             {row.month}
                           </td>
                           <td className="py-2.5 px-4 text-right text-slate-600">
-                            {formatCurrency(row.principalPayment)}
+                            {formatCurrencyDisplay(row.principalPayment)}
                           </td>
                           <td className="py-2.5 px-4 text-right text-amber-600">
-                            {formatCurrency(row.interestPayment)}
+                            {formatCurrencyDisplay(row.interestPayment)}
                           </td>
                           <td className="py-2.5 px-4 text-right font-semibold text-blue-600">
-                            {formatCurrency(row.totalPayment)}
+                            {formatCurrencyDisplay(row.totalPayment)}
                           </td>
                           <td className="py-2.5 px-4 text-right text-slate-400">
-                            {formatCurrency(row.remainingBalance)}
+                            {formatCurrencyDisplay(row.remainingBalance)}
                           </td>
                         </tr>
                       ))}
@@ -372,33 +371,18 @@ const LoanRegistrationForm = () => {
                 <button
                   onClick={handleRegister}
                   type="button"
-                  disabled={isRegistering || isRegisteredSuccessfully}
+                  disabled={isRegistering}
                   style={{
-                    background:
-                      isRegistering || isRegisteredSuccessfully
-                        ? undefined
-                        : "linear-gradient(135deg, #059669 0%, #10b981 100%)",
+                    background: isRegistering
+                      ? undefined
+                      : "linear-gradient(135deg, #059669 0%, #10b981 100%)",
                   }}
                   className="w-full cursor-pointer sm:w-auto text-white font-bold py-3.5 px-8 rounded-xl shadow-md hover:opacity-90 active:scale-[0.99] transition-all duration-150 text-sm tracking-wide disabled:opacity-60 disabled:cursor-not-allowed bg-emerald-500"
                 >
                   {isRegistering
                     ? "⏳ Đang gửi đăng ký..."
-                    : isRegisteredSuccessfully
-                      ? "Đã đăng ký vay"
-                      : "✅ Tôi đồng ý — Đăng ký vay ngay"}
+                    : "✅ Tôi đồng ý — Đăng ký vay ngay"}
                 </button>
-
-                {registerSuccess && (
-                  <div
-                    className="mt-4 flex items-center gap-3 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3"
-                    role="status"
-                  >
-                    <span className="text-emerald-500 text-lg mt-0.5">✓</span>
-                    <p className="text-sm text-emerald-700 font-medium">
-                      {registerSuccess}
-                    </p>
-                  </div>
-                )}
                 {registerError && (
                   <div
                     className="mt-4 flex items-center gap-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3"
@@ -423,5 +407,3 @@ const LoanRegistrationForm = () => {
     </div>
   );
 };
-
-export default LoanRegistrationForm;
